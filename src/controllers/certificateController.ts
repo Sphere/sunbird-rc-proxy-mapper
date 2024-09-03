@@ -81,6 +81,7 @@ const generateCertificateFromRC = async (templateId: String, rcCertificateGenera
         return generateCertificateResponseFromRc.data.result[`${templateId}`].osid
     } catch (error) {
         logger.info(error)
+        return false
     }
 
 }
@@ -101,10 +102,11 @@ const getCertificateDetailsFromRC = async (certificateOsid: String, userToken: S
         logger.info(error)
         return false
     }
-
 }
 const uploadCertificateToS3 = async (certificateDetails: any, templateId: String, userId: String, certificateCreationTime: Number) => {
     try {
+        console.log("Inside uploadCertificateToS3")
+        console.log(certificateDetails,templateId,userId,certificateCreationTime)
         if (typeof certificateDetails === 'string') {
             certificateDetails = certificateDetails.replace(/&nbsp;/g, '&#160;');
             const svgStartIndex = certificateDetails.indexOf('<svg');
@@ -124,6 +126,7 @@ const uploadCertificateToS3 = async (certificateDetails: any, templateId: String
             .png().
             resize({ width: 200, height: 200 })
             .toBuffer();
+        console.log(certificateBuffer,thumbnailBuffer)
         await uploadToS3(`${templateId}/${userId}/${certificateCreationTime}-certificate.png`, certificateBuffer, bucketName);
         await uploadToS3(`${templateId}/${userId}/${certificateCreationTime}-thumbnail.png`, thumbnailBuffer, bucketName);
     } catch (error) {
@@ -190,6 +193,7 @@ export const generateUserCertificatesFromRc = async (req: Request, res: Response
                 "reason": "Something went wrong while retrieving user certificates from RC"
             })
         }
+        console.log("certificateDetailsFromRc", certificateDetailsFromRc)
         const uploadCertificateStatus = await uploadCertificateToS3(certificateDetailsFromRc, templateId, userId, certificateCreationTime)
         if (!uploadCertificateStatus) {
             return res.status(404).json({
