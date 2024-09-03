@@ -12,25 +12,44 @@ const s3 = new AWS.S3({
     secretAccessKey: process.env.SECRET_ACCESS_KEY,
     region: process.env.AWS_REGION,
 });
-const bucketName = process.env.AWS_BUCKET_NAME || "ap-south-1";
+const bucketName = process.env.AWS_BUCKET_NAME || "sunbird-rc-proxy-certificates";
 const uploadToS3 = async (fileName: string, fileBuffer: any, bucketName: string) => {
-    const params = {
-        Bucket: bucketName,
-        Key: fileName,
-        Body: fileBuffer,
-        ContentType: 'image/png',
-    };
-    return s3.upload(params).promise();
+    try {
+        const params = {
+            Bucket: bucketName,
+            Key: fileName,
+            Body: fileBuffer,
+            ContentType: 'image/png',
+        };
+        return s3.upload(params).promise();
+    } catch (error) {
+        logger.error(error)
+    }
+    
 };
 
 export const getUserCertificateDetails = async (req: Request, res: Response) => {
     try {
         const { userId } = req.query
-        const selectQuery = 'SELECT * FROM rc_proxy_user_mapping WHERE user_id = $1';
+        const selectQuery = 'SELECT * FROM rc_proxy_user_mapping WHERE userId = $1';
         const selectResult = await client.query(selectQuery, [userId]);
+        const formattedResult = selectResult.rows.map((row) => {
+            return {
+            "userId": row.userid,
+            "rcUserCertificateId": row.rcusercertificateid,
+            "rcCertificateTemplateId": row.rccertificatetemplateid,
+            "userName": row.username,
+            "meta": row.meta,
+            "createdAt": row.createdat,
+            "updatedAt": row.updatedat,
+            "certificateDownloadUrl": row.certificatedownloadurl,
+            "certificateName": row.certificatename,
+            "thumbnail": row.thumbnail
+            }
+        })
         res.status(200).json({
             message: "SUCCESS",
-            data: selectResult.rows
+            data: formattedResult
         })
     } catch (error) {
         logger.error(error)
@@ -105,8 +124,6 @@ const getCertificateDetailsFromRC = async (certificateOsid: String, userToken: S
 }
 const uploadCertificateToS3 = async (certificateDetails: any, templateId: String, userId: String, certificateCreationTime: Number) => {
     try {
-        console.log("Inside uploadCertificateToS3")
-        console.log(certificateDetails,templateId,userId,certificateCreationTime)
         if (typeof certificateDetails === 'string') {
             certificateDetails = certificateDetails.replace(/&nbsp;/g, '&#160;');
             const svgStartIndex = certificateDetails.indexOf('<svg');
@@ -126,9 +143,9 @@ const uploadCertificateToS3 = async (certificateDetails: any, templateId: String
             .png().
             resize({ width: 200, height: 200 })
             .toBuffer();
-        console.log(certificateBuffer,thumbnailBuffer)
         await uploadToS3(`${templateId}/${userId}/${certificateCreationTime}-certificate.png`, certificateBuffer, bucketName);
         await uploadToS3(`${templateId}/${userId}/${certificateCreationTime}-thumbnail.png`, thumbnailBuffer, bucketName);
+        return true
     } catch (error) {
         logger.info(error)
         return false
@@ -143,20 +160,17 @@ const updateUserCertificateDetails = async (userId: String, templateId: String, 
         const insertQuery = `
         INSERT INTO rc_proxy_user_mapping (
             uuid_id,
-            user_id,
-            rc_user_certificate_id,
-            rc_certificate_template_id,
-            user_name,
+            userid,
+            rcusercertificateid,
+            rccertificatetemplateid,
+            username,
             meta,
             certificatedownloadurl,
             certificatename,
-            thumbnail,
-            createdat,
-            updateat
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`;
-
+            thumbnail
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`;
         const insertValues = [
-            uuid, userId, certificateOsid, templateId, userName, {}, certificateUrl, templateId, thumbnailUrl, certificateCreationTime, certificateCreationTime
+            uuid, userId, certificateOsid, templateId, userName, {}, certificateUrl, templateId, thumbnailUrl
         ]
         await client.query(insertQuery, insertValues);
         return {
@@ -193,7 +207,6 @@ export const generateUserCertificatesFromRc = async (req: Request, res: Response
                 "reason": "Something went wrong while retrieving user certificates from RC"
             })
         }
-        console.log("certificateDetailsFromRc", certificateDetailsFromRc)
         const uploadCertificateStatus = await uploadCertificateToS3(certificateDetailsFromRc, templateId, userId, certificateCreationTime)
         if (!uploadCertificateStatus) {
             return res.status(404).json({
