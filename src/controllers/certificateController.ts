@@ -152,7 +152,7 @@ const uploadCertificateToS3 = async (certificateDetails: any, templateId: String
     }
 
 }
-const updateUserCertificateDetails = async (userId: String, templateId: String, userName: String, certificateOsid: String, certificateCreationTime: Number) => {
+const updateUserCertificateDetails = async (userId: String, templateId: String, userName: String, certificateOsid: String, certificateCreationTime: Number,certificateName:String) => {
     try {
         const uuid: string = uuidv4();
         const certificateUrl = `https://${bucketName}.s3.ap-south-1.amazonaws.com/${templateId}/${userId}/${certificateCreationTime}-certificate.png`
@@ -170,7 +170,7 @@ const updateUserCertificateDetails = async (userId: String, templateId: String, 
             thumbnail
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`;
         const insertValues = [
-            uuid, userId, certificateOsid, templateId, userName, {}, certificateUrl, templateId, thumbnailUrl
+            uuid, userId, certificateOsid, templateId, userName, {}, certificateUrl, certificateName, thumbnailUrl
         ]
         await client.query(insertQuery, insertValues);
         return {
@@ -184,7 +184,7 @@ const updateUserCertificateDetails = async (userId: String, templateId: String, 
 }
 export const generateUserCertificatesFromRc = async (req: Request, res: Response) => {
     try {
-        const { rcCertificateGenerationBody, templateId, userId, userName } = req.body
+        const { rcCertificateGenerationBody, templateId, userId, userName,certificateName } = req.body
         const certificateCreationTime = Date.now()
         const keycloakAdminToken = await generateKeycloakAdminToken()
         if (!keycloakAdminToken) {
@@ -214,7 +214,7 @@ export const generateUserCertificatesFromRc = async (req: Request, res: Response
                 "reason": "Something went wrong while uploading user certificates to S3"
             })
         }
-        const updateUserCertificateDetailStatus = await updateUserCertificateDetails(userId, templateId, userName, certificateOsid, certificateCreationTime)
+        const updateUserCertificateDetailStatus = await updateUserCertificateDetails(userId, templateId, userName, certificateOsid, certificateCreationTime,certificateName)
         if (!updateUserCertificateDetailStatus) {
             return res.status(404).json({
                 "message": "Failed",
