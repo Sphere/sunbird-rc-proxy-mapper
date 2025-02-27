@@ -25,7 +25,7 @@ const uploadToS3 = async (fileName: string, fileBuffer: any, bucketName: string)
     } catch (error) {
         logger.error(error)
     }
-    
+
 };
 
 export const getUserCertificateDetails = async (req: Request, res: Response) => {
@@ -35,16 +35,16 @@ export const getUserCertificateDetails = async (req: Request, res: Response) => 
         const selectResult = await client.query(selectQuery, [userId]);
         const formattedResult = selectResult.rows.map((row) => {
             return {
-            "userId": row.userid,
-            "rcUserCertificateId": row.rcusercertificateid,
-            "rcCertificateTemplateId": row.rccertificatetemplateid,
-            "userName": row.username,
-            "meta": row.meta,
-            "createdAt": row.createdat,
-            "updatedAt": row.updatedat,
-            "certificateDownloadUrl": row.certificatedownloadurl,
-            "certificateName": row.certificatename,
-            "thumbnail": row.thumbnail
+                "userId": row.userid,
+                "rcUserCertificateId": row.rcusercertificateid,
+                "rcCertificateTemplateId": row.rccertificatetemplateid,
+                "userName": row.username,
+                "meta": row.meta,
+                "createdAt": row.createdat,
+                "updatedAt": row.updatedat,
+                "certificateDownloadUrl": row.certificatedownloadurl,
+                "certificateName": row.certificatename,
+                "thumbnail": row.thumbnail
             }
         })
         res.status(200).json({
@@ -122,7 +122,7 @@ const getCertificateDetailsFromRC = async (certificateOsid: String, userToken: S
         return false
     }
 }
-const uploadCertificateToS3 = async (certificateDetails: any, templateId: String, userId: String, certificateCreationTime: Number) => {
+const uploadCertificateToS3 = async (certificateDetails: any, templateId: String, userId: String, certificateCreationTime: Number, eventId: String, rcCertificateGenerationBody: any) => {
     try {
         if (typeof certificateDetails === 'string') {
             certificateDetails = certificateDetails.replace(/&nbsp;/g, '&#160;');
@@ -143,6 +143,8 @@ const uploadCertificateToS3 = async (certificateDetails: any, templateId: String
             .png().
             resize({ width: 200, height: 200 })
             .toBuffer();
+
+        await uploadToS3(`mdo-rc-certificates/${eventId}/${rcCertificateGenerationBody.name}/${rcCertificateGenerationBody.date}-certificate.png`, certificateBuffer, bucketName);
         await uploadToS3(`${templateId}/${userId}/${certificateCreationTime}-certificate.png`, certificateBuffer, bucketName);
         await uploadToS3(`${templateId}/${userId}/${certificateCreationTime}-thumbnail.png`, thumbnailBuffer, bucketName);
         return true
@@ -152,7 +154,7 @@ const uploadCertificateToS3 = async (certificateDetails: any, templateId: String
     }
 
 }
-const updateUserCertificateDetails = async (userId: String, templateId: String, userName: String, certificateOsid: String, certificateCreationTime: Number,certificateName:String) => {
+const updateUserCertificateDetails = async (userId: String, templateId: String, userName: String, certificateOsid: String, certificateCreationTime: Number, certificateName: String) => {
     try {
         const uuid: string = uuidv4();
         const certificateUrl = `https://${bucketName}.s3.ap-south-1.amazonaws.com/${templateId}/${userId}/${certificateCreationTime}-certificate.png`
@@ -184,7 +186,7 @@ const updateUserCertificateDetails = async (userId: String, templateId: String, 
 }
 export const generateUserCertificatesFromRc = async (req: Request, res: Response) => {
     try {
-        const { rcCertificateGenerationBody, templateId, userId, userName,certificateName } = req.body
+        const { rcCertificateGenerationBody, templateId, userId, userName, certificateName, eventId } = req.body
         const certificateCreationTime = Date.now()
         const keycloakAdminToken = await generateKeycloakAdminToken()
         if (!keycloakAdminToken) {
@@ -207,14 +209,14 @@ export const generateUserCertificatesFromRc = async (req: Request, res: Response
                 "reason": "Something went wrong while retrieving user certificates from RC"
             })
         }
-        const uploadCertificateStatus = await uploadCertificateToS3(certificateDetailsFromRc, templateId, userId, certificateCreationTime)
+        const uploadCertificateStatus = await uploadCertificateToS3(certificateDetailsFromRc, templateId, userId, certificateCreationTime, eventId, rcCertificateGenerationBody)
         if (!uploadCertificateStatus) {
             return res.status(404).json({
                 "message": "Failed",
                 "reason": "Something went wrong while uploading user certificates to S3"
             })
         }
-        const updateUserCertificateDetailStatus = await updateUserCertificateDetails(userId, templateId, userName, certificateOsid, certificateCreationTime,certificateName)
+        const updateUserCertificateDetailStatus = await updateUserCertificateDetails(userId, templateId, userName, certificateOsid, certificateCreationTime, certificateName)
         if (!updateUserCertificateDetailStatus) {
             return res.status(404).json({
                 "message": "Failed",
