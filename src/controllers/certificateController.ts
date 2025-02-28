@@ -144,7 +144,7 @@ const uploadCertificateToS3 = async (certificateDetails: any, templateId: String
             resize({ width: 200, height: 200 })
             .toBuffer();
 
-        await uploadToS3(`mdo-rc-certificates/${eventId}/${rcCertificateGenerationBody.name}/${rcCertificateGenerationBody.date}-certificate.png`, certificateBuffer, bucketName);
+        await uploadToS3(`mdo-rc-certificates/${eventId}/${rcCertificateGenerationBody.name}-${rcCertificateGenerationBody.date}-certificate.png`, certificateBuffer, bucketName);
         await uploadToS3(`${templateId}/${userId}/${certificateCreationTime}-certificate.png`, certificateBuffer, bucketName);
         await uploadToS3(`${templateId}/${userId}/${certificateCreationTime}-thumbnail.png`, thumbnailBuffer, bucketName);
         return true
