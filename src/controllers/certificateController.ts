@@ -6,6 +6,13 @@ import sharp from 'sharp';
 import AWS from 'aws-sdk';
 import { v4 as uuidv4 } from 'uuid';
 import { Buffer } from 'buffer';
+const PDFDocument = require("pdfkit");
+const SVGtoPDF = require("svg-to-pdfkit");
+import stream from 'stream';
+
+
+
+
 
 const s3 = new AWS.S3({
     accessKeyId: process.env.ACCESS_KEY_ID,
@@ -13,13 +20,13 @@ const s3 = new AWS.S3({
     region: process.env.AWS_REGION,
 });
 const bucketName = process.env.AWS_BUCKET_NAME || "sunbird-rc-proxy-certificates";
-const uploadToS3 = async (fileName: string, fileBuffer: any, bucketName: string) => {
+const uploadToS3 = async (fileName: string, fileBuffer: any, bucketName: string,contentType: string) => {
     try {
         const params = {
             Bucket: bucketName,
             Key: fileName,
             Body: fileBuffer,
-            ContentType: 'image/png',
+            ContentType: contentType,
         };
         return s3.upload(params).promise();
     } catch (error) {
@@ -112,7 +119,7 @@ const getCertificateDetailsFromRC = async (certificateOsid: String, userToken: S
                 headers: {
                     'Accept': 'image/svg+xml',
                     'template-key': 'html',
-                    'Authorization': `Bearer ${userToken}`
+                    'Authorization': `Bearer ${userToken}`,
                 },
             }
         );
@@ -122,7 +129,7 @@ const getCertificateDetailsFromRC = async (certificateOsid: String, userToken: S
         return false
     }
 }
-const uploadCertificateToS3 = async (certificateDetails: any, templateId: String, userId: String, certificateCreationTime: Number, eventId: String, rcCertificateGenerationBody: any) => {
+const uploadCertificateToS3ForMyCertificates = async (certificateDetails: any, templateId: String, userId: String, certificateCreationTime: Number, eventId: String, rcCertificateGenerationBody: any) => {
     try {
         if (typeof certificateDetails === 'string') {
             certificateDetails = certificateDetails.replace(/&nbsp;/g, '&#160;');
@@ -137,16 +144,14 @@ const uploadCertificateToS3 = async (certificateDetails: any, templateId: String
             return false
         }
         const certificateBuffer = await sharp(Buffer.from(certificateDetails))
-            .png()
+            .png({ compressionLevel: 0 })
             .toBuffer();
         const thumbnailBuffer = await sharp(Buffer.from(certificateDetails))
-            .png().
-            resize({ width: 200, height: 200 })
+            .png({ quality: 100 })
+            .resize({ width: 200, height: 200 })
             .toBuffer();
-
-        await uploadToS3(`mdo-rc-certificates/${eventId}/${rcCertificateGenerationBody.name}-${rcCertificateGenerationBody.date}-certificate.png`, certificateBuffer, bucketName);
-        await uploadToS3(`${templateId}/${userId}/${certificateCreationTime}-certificate.png`, certificateBuffer, bucketName);
-        await uploadToS3(`${templateId}/${userId}/${certificateCreationTime}-thumbnail.png`, thumbnailBuffer, bucketName);
+        await uploadToS3(`${templateId}/${userId}/${certificateCreationTime}-certificate.png`, certificateBuffer, bucketName,"image/png");
+        await uploadToS3(`${templateId}/${userId}/${certificateCreationTime}-thumbnail.png`, thumbnailBuffer, bucketName,"image/png");
         return true
     } catch (error) {
         logger.info(error)
@@ -154,6 +159,26 @@ const uploadCertificateToS3 = async (certificateDetails: any, templateId: String
     }
 
 }
+
+const uploadCertificateToS3ForMdo = async (certificateDetails: any, templateId: String, userId: String, certificateCreationTime: Number, eventId: String, rcCertificateGenerationBody: any) => {
+    try {
+        const cleanedSvgData=certificateDetails.replace(/<\/?head[^>]*>/g, '').replace(/<\/?style[^>]*>/g, '').replace(/<\/?body[^>]*>/g, '')
+        const pdfDoc = new PDFDocument({ size: "A4", layout: "landscape" });
+        const passThroughStream = new stream.PassThrough();
+        pdfDoc.pipe(passThroughStream);
+        SVGtoPDF(pdfDoc, cleanedSvgData, 0, 0);
+        pdfDoc.end();
+        SVGtoPDF(pdfDoc, cleanedSvgData, 0, 0); // Pass your SVG data here
+        await uploadToS3(`mdo-rc-certificates/${eventId}/${rcCertificateGenerationBody.name}-${rcCertificateGenerationBody.date}-certificate.pdf`, passThroughStream, bucketName,"applicatioin/pdf");
+        return true
+    } catch (error) {
+        logger.info(error)
+        return false
+    }
+
+}
+
+
 const updateUserCertificateDetails = async (userId: String, templateId: String, userName: String, certificateOsid: String, certificateCreationTime: Number, certificateName: String) => {
     try {
         const uuid: string = uuidv4();
@@ -209,11 +234,18 @@ export const generateUserCertificatesFromRc = async (req: Request, res: Response
                 "reason": "Something went wrong while retrieving user certificates from RC"
             })
         }
-        const uploadCertificateStatus = await uploadCertificateToS3(certificateDetailsFromRc, templateId, userId, certificateCreationTime, eventId, rcCertificateGenerationBody)
-        if (!uploadCertificateStatus) {
+        const uploadCertificateStatusforMyCertificates = await uploadCertificateToS3ForMyCertificates(certificateDetailsFromRc, templateId, userId, certificateCreationTime, eventId, rcCertificateGenerationBody)
+        if (!uploadCertificateStatusforMyCertificates) {
             return res.status(404).json({
                 "message": "Failed",
                 "reason": "Something went wrong while uploading user certificates to S3"
+            })
+        }
+        const uploadCertificateStatusForMdo = await uploadCertificateToS3ForMdo(certificateDetailsFromRc, templateId, userId, certificateCreationTime, eventId, rcCertificateGenerationBody)
+        if (!uploadCertificateStatusForMdo) {
+            return res.status(404).json({
+                "message": "Failed",
+                "reason": "Something went wrong while uploading user certificates to S3 for MDO poratl"
             })
         }
         const updateUserCertificateDetailStatus = await updateUserCertificateDetails(userId, templateId, userName, certificateOsid, certificateCreationTime, certificateName)
