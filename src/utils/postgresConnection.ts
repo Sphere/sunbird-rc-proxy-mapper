@@ -5,14 +5,15 @@ export const client = new Client({
     host: process.env.POSTGRES_HOST,
     database: process.env.POSTGRES_DATABASE,
     password: process.env.POSTGRES_PASSWORD,
-    port: 5432,
+    port: parseInt(process.env.POSTGRES_PORT || '5433', 10),
+    ssl: process.env.POSTGRES_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
 });
 export const connectDB = async () => {
     try {
         await client.connect();
         logger.info('Database connected successfully');
     } catch (error) {
-        logger.error('Database connection error:', error);
+        logger.error({ err: error }, 'Database connection error');
         throw new Error('Database connection error');
     }
 };
