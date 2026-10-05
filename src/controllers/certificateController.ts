@@ -164,12 +164,15 @@ const uploadCertificateToS3ForMyCertificates = async (certificateDetails: any, t
 const uploadCertificateToS3ForMdo = async (certificateDetails: any, templateId: String, userId: String, certificateCreationTime: Number, eventId: String, rcCertificateGenerationBody: any) => {
     try {
         const cleanedSvgData=certificateDetails.replace(/<\/?head[^>]*>/g, '').replace(/<\/?style[^>]*>/g, '').replace(/<\/?body[^>]*>/g, '')
-        const pdfDoc = new PDFDocument({ size: "A4", layout: "landscape" });
+        // Page = the template's own viewBox, drawn 1:1. Scaling it onto A4 made mobile previewers
+        // (Outlook iOS) clip the design to ~60% and leave the QR floating outside it.
+        const viewBox = cleanedSvgData.match(/viewBox\s*=\s*["']\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)/)
+        const [pageWidth, pageHeight] = viewBox ? [Number(viewBox[1]), Number(viewBox[2])] : [841.89, 595.28]
+        const pdfDoc = new PDFDocument({ size: [pageWidth, pageHeight], margin: 0 });
         const passThroughStream = new stream.PassThrough();
         pdfDoc.pipe(passThroughStream);
-        SVGtoPDF(pdfDoc, cleanedSvgData, 0, 0);
+        SVGtoPDF(pdfDoc, cleanedSvgData, 0, 0, { width: pageWidth, height: pageHeight, assumePt: true });
         pdfDoc.end();
-        SVGtoPDF(pdfDoc, cleanedSvgData, 0, 0); // Pass your SVG data here
         // userId suffix: two participants with the same name in one event used to overwrite each other's PDF
         const baseName = `mdo-rc-certificates/${eventId}/${rcCertificateGenerationBody.name}-${rcCertificateGenerationBody.date}`
         const pdfKey = `${baseName}-${String(userId).slice(0, 8)}-certificate.pdf`
