@@ -20,13 +20,14 @@ const s3 = new AWS.S3({
     region: process.env.AWS_REGION,
 });
 const bucketName = process.env.AWS_BUCKET_NAME || "sunbird-rc-proxy-certificates";
-const uploadToS3 = async (fileName: string, fileBuffer: any, bucketName: string,contentType: string) => {
+const uploadToS3 = async (fileName: string, fileBuffer: any, bucketName: string,contentType: string, contentDisposition?: string) => {
     try {
         const params = {
             Bucket: bucketName,
             Key: fileName,
             Body: fileBuffer,
             ContentType: contentType,
+            ...(contentDisposition && { ContentDisposition: contentDisposition }),
         };
         return s3.upload(params).promise();
     } catch (error) {
@@ -169,8 +170,17 @@ const uploadCertificateToS3ForMdo = async (certificateDetails: any, templateId: 
         SVGtoPDF(pdfDoc, cleanedSvgData, 0, 0);
         pdfDoc.end();
         SVGtoPDF(pdfDoc, cleanedSvgData, 0, 0); // Pass your SVG data here
-        await uploadToS3(`mdo-rc-certificates/${eventId}/${rcCertificateGenerationBody.name}-${rcCertificateGenerationBody.date}-certificate.pdf`, passThroughStream, bucketName,"applicatioin/pdf");
-        return true
+        // userId suffix: two participants with the same name in one event used to overwrite each other's PDF
+        const baseName = `mdo-rc-certificates/${eventId}/${rcCertificateGenerationBody.name}-${rcCertificateGenerationBody.date}`
+        const pdfKey = `${baseName}-${String(userId).slice(0, 8)}-certificate.pdf`
+        // attachment: emailed links download the PDF instead of opening it in the browser
+        const fileName = `${rcCertificateGenerationBody.name}-certificate.pdf`
+        await uploadToS3(pdfKey, passThroughStream, bucketName, "application/pdf",
+            `attachment; filename="${fileName.replace(/[^\x20-\x7E]|"/g, '_')}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+        // remove the pre-suffix copy so the event download zip doesn't contain the same certificate twice
+        await s3.deleteObject({ Bucket: bucketName, Key: `${baseName}-certificate.pdf` }).promise()
+            .catch((error) => logger.info(error))
+        return `https://${bucketName}.s3.ap-south-1.amazonaws.com/${pdfKey.split('/').map(encodeURIComponent).join('/')}`
     } catch (error) {
         logger.info(error)
         return false
@@ -199,7 +209,19 @@ const updateUserCertificateDetails = async (userId: String, templateId: String, 
         const insertValues = [
             uuid, userId, certificateOsid, templateId, userName, {}, certificateUrl, certificateName, thumbnailUrl
         ]
-        await client.query(insertQuery, insertValues);
+        const existing = await client.query(
+            'SELECT uuid_id FROM rc_proxy_user_mapping WHERE userid = $1 AND rccertificatetemplateid = $2 LIMIT 1',
+            [userId, templateId]
+        )
+        if (existing.rowCount) {
+            // re-generation: point the existing row at the new certificate instead of adding a duplicate
+            await client.query(
+                'UPDATE rc_proxy_user_mapping SET rcusercertificateid = $1, username = $2, certificatedownloadurl = $3, certificatename = $4, thumbnail = $5 WHERE uuid_id = $6',
+                [certificateOsid, userName, certificateUrl, certificateName, thumbnailUrl, existing.rows[0].uuid_id]
+            )
+        } else {
+            await client.query(insertQuery, insertValues);
+        }
         return {
             certificateUrl,
             thumbnailUrl
@@ -258,7 +280,8 @@ export const generateUserCertificatesFromRc = async (req: Request, res: Response
         res.status(200).json({
             "message": "Certificate generated successfully",
             certificateUrl: updateUserCertificateDetailStatus.certificateUrl,
-            thumbnailUrl: updateUserCertificateDetailStatus.thumbnailUrl
+            thumbnailUrl: updateUserCertificateDetailStatus.thumbnailUrl,
+            pdfUrl: uploadCertificateStatusForMdo
         })
     } catch (error) {
         logger.info(error)
